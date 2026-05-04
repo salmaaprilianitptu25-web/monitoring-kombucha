@@ -1,71 +1,106 @@
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kombucha Monitoring System</title>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-    
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #f0f2f5; color: #333; }
-        .container { width: 85%; margin: auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-top: 40px; }
-        h1 { color: #1b5e20; }
-        .data-box { display: flex; justify-content: space-around; margin-top: 30px; flex-wrap: wrap; }
-        .card { padding: 25px; background: #ffffff; border: 2px solid #e8f5e9; border-radius: 12px; width: 28%; min-width: 200px; margin: 10px; transition: 0.3s; }
-        .card:hover { transform: translateY(-5px); box-shadow: 0 6px 12px rgba(0,0,0,0.1); }
-        .card h3 { margin: 0; color: #2e7d32; font-size: 1.1rem; }
-        .value { font-size: 2rem; font-weight: bold; margin: 15px 0; color: #1b5e20; }
-        .status-box { margin-top: 40px; padding: 20px; background: #fffde7; border-radius: 10px; }
-        .status { font-weight: bold; font-size: 1.5em; color: #d32f2f; }
-    </style>
-</head>
-<body>
+#include <Arduino.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <SD.h>
+#include <WiFi.h>
+#include <FirebaseESP32.h>
+#include <LiquidCrystal_I2C.h>
+#include <MQUnifiedsensor.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
-<div class="container">
-    <h1>Monitoring Fermentasi Kombucha</h1>
-    <div class="data-box">
-        <div class="card">
-            <h3>Kadar CO2</h3>
-            <div id="co2" class="value">...</div>
-            <span>PPM</span>
-        </div>
-        <div class="card">
-            <h3>Suhu Toples 1</h3>
-            <div id="t1" class="value">...</div>
-            <span>°C</span>
-        </div>
-        <div class="card">
-            <h3>Suhu Toples 2</h3>
-            <div id="t2" class="value">...</div>
-            <span>°C</span>
-        </div>
-    </div>
-    <div class="status-box">
-        <h3>Status Actuator (Relay): <span id="relay" class="status">...</span></h3>
-    </div>
-</div>
+#define WIFI_SSID "april"
+#define WIFI_PASSWORD "iyaituaja"
+#define FIREBASE_HOST "kombucha-iot-bff2b-default-rtdb.asia-southeast1.firebasedatabase.app"
+#define FIREBASE_AUTH "" 
 
-<script>
-    // Konfigurasi sesuai database kamu
-    const firebaseConfig = {
-        databaseURL: "https://kombucha-iot-bff2b-default-rtdb.asia-southeast1.firebasedatabase.app/"
-    };
-    
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.database();
+#define PIN_MQ135 34
+#define PIN_DS18B20 4
+#define PIN_RELAY 2    
+#define SD_CS 5        
 
-    // Ambil data real-time dari node "kombucha"
-    db.ref("kombucha").on("value", (snapshot) => {
-        const data = snapshot.val();
-        if(data) {
-            document.getElementById("co2").innerText = data.co2;
-            document.getElementById("t1").innerText = data.suhu1.toFixed(1);
-            document.getElementById("t2").innerText = data.suhu2.toFixed(1);
-            document.getElementById("relay").innerText = data.status_relay;
-        }
-    });
-</script>
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+OneWire oneWire(PIN_DS18B20);
+DallasTemperature sensors(&oneWire);
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
 
-</body>
-</html>
+MQUnifiedsensor MQ135("ESP-32", 3.3, 12, PIN_MQ135, "MQ-135");
+
+String statusActuator = "OFF";
+bool isSystemRunning = true; // Variabel untuk start/stop
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PIN_RELAY, OUTPUT);
+  digitalWrite(PIN_RELAY, LOW);
+
+  lcd.init(); lcd.backlight();
+  lcd.setCursor(0,0); lcd.print("   SYSTEM STARTING  ");
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); }
+  
+  config.host = FIREBASE_HOST;
+  config.signer.tokens.legacy_token = FIREBASE_AUTH;
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  SD.begin(SD_CS);
+  sensors.begin();
+  MQ135.setRegressionMethod(1);
+  MQ135.setA(110.47); MQ135.setB(-2.862);
+  MQ135.init(); MQ135.setR0(62.04);
+  lcd.clear();
+}
+
+void loop() {
+  // 1. CEK PERINTAH DARI WEB (START/STOP)
+  if (Firebase.getString(fbdo, "/kombucha_control/command")) {
+    String cmd = fbdo.stringData();
+    if (cmd == "STOP") isSystemRunning = false;
+    else if (cmd == "START") isSystemRunning = true;
+  }
+
+  if (!isSystemRunning) {
+    lcd.setCursor(0,0); lcd.print("STATUS: SYSTEM STOP ");
+    lcd.setCursor(0,1); lcd.print("Waiting Start...    ");
+    digitalWrite(PIN_RELAY, LOW);
+    delay(2000);
+    return; // Berhenti di sini, tidak baca sensor
+  }
+
+  // 2. BACA SENSOR
+  MQ135.update();
+  float co2 = MQ135.readSensor();
+  if (co2 < 400) co2 = 400;
+
+  sensors.requestTemperatures();
+  float t1 = sensors.getTempCByIndex(0);
+  float t2 = sensors.getTempCByIndex(1);
+
+  // 3. LOGIKA RELAY
+  if (co2 > 1000) { digitalWrite(PIN_RELAY, HIGH); statusActuator = "ON "; }
+  else { digitalWrite(PIN_RELAY, LOW); statusActuator = "OFF"; }
+
+  // 4. UPDATE LCD
+  lcd.setCursor(0, 0); lcd.print("CO2: "); lcd.print((int)co2); lcd.print(" PPM      ");
+  lcd.setCursor(0, 1); lcd.print("T1 : "); lcd.print(t1, 1); lcd.print("C  T2: "); lcd.print(t2, 1);
+  lcd.setCursor(0, 2); lcd.print("Actuator: "); lcd.print(statusActuator);
+  lcd.setCursor(0, 3); lcd.print("WiFi: OK  SD: LOGGING");
+
+  // 5. KIRIM KE FIREBASE & SD
+  Firebase.setInt(fbdo, "/kombucha/co2", (int)co2);
+  Firebase.setFloat(fbdo, "/kombucha/suhu1", t1);
+  Firebase.setFloat(fbdo, "/kombucha/suhu2", t2);
+  Firebase.setString(fbdo, "/kombucha/status_relay", statusActuator);
+
+  File dataFile = SD.open("/log.csv", FILE_APPEND);
+  if (dataFile) {
+    dataFile.printf("%lu,%d,%.1f,%.1f,%s\n", millis(), (int)co2, t1, t2, statusActuator.c_str());
+    dataFile.close();
+  }
+
+  delay(5000);
+}
