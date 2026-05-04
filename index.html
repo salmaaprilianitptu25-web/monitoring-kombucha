@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kombucha Monitoring System</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #f0f2f5; color: #333; }
+        .container { width: 85%; margin: auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-top: 40px; }
+        h1 { color: #1b5e20; }
+        .data-box { display: flex; justify-content: space-around; margin-top: 30px; flex-wrap: wrap; }
+        .card { padding: 25px; background: #ffffff; border: 2px solid #e8f5e9; border-radius: 12px; width: 28%; min-width: 200px; margin: 10px; transition: 0.3s; }
+        .card:hover { transform: translateY(-5px); box-shadow: 0 6px 12px rgba(0,0,0,0.1); }
+        .card h3 { margin: 0; color: #2e7d32; font-size: 1.1rem; }
+        .value { font-size: 2rem; font-weight: bold; margin: 15px 0; color: #1b5e20; }
+        .status-box { margin-top: 40px; padding: 20px; background: #fffde7; border-radius: 10px; }
+        .status { font-weight: bold; font-size: 1.5em; color: #d32f2f; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Monitoring Fermentasi Kombucha</h1>
+    <div class="data-box">
+        <div class="card">
+            <h3>Kadar CO2</h3>
+            <div id="co2" class="value">...</div>
+            <span>PPM</span>
+        </div>
+        <div class="card">
+            <h3>Suhu Toples 1</h3>
+            <div id="t1" class="value">...</div>
+            <span>°C</span>
+        </div>
+        <div class="card">
+            <h3>Suhu Toples 2</h3>
+            <div id="t2" class="value">...</div>
+            <span>°C</span>
+        </div>
+    </div>
+    <div class="status-box">
+        <h3>Status Actuator (Relay): <span id="relay" class="status">...</span></h3>
+    </div>
+</div>
+
+<script>
+    // Konfigurasi sesuai database kamu
+    const firebaseConfig = {
+        databaseURL: "https://kombucha-iot-bff2b-default-rtdb.asia-southeast1.firebasedatabase.app/"
+    };
+    
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // Ambil data real-time dari node "kombucha"
+    db.ref("kombucha").on("value", (snapshot) => {
+        const data = snapshot.val();
+        if(data) {
+            document.getElementById("co2").innerText = data.co2;
+            document.getElementById("t1").innerText = data.suhu1.toFixed(1);
+            document.getElementById("t2").innerText = data.suhu2.toFixed(1);
+            document.getElementById("relay").innerText = data.status_relay;
+        }
+    });
+</script>
+
+</body>
+</html>
